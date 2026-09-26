@@ -774,7 +774,11 @@
     renderHistory();
   }
 
-  function round2(n){ return Math.round(n * 100) / 100; }
+  function round2(n){
+    // guards against float artifacts (e.g. 123.455 -> 123.44999999999999)
+    // before rounding, so the suggested/default amount always lands on a clean cent
+    return Math.round((n + Number.EPSILON) * 100) / 100;
+  }
 
   function renderStartSuggestion(){
     var s = state.pendingSuggestion;
