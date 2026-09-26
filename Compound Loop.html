@@ -1024,10 +1024,15 @@
   el.startSuggestionApply.addEventListener("click", function(){
     if(!state.pendingSuggestion) return;
     state.startAmount = state.pendingSuggestion.amount;
+    // also carry it into the active loop's K1 stake, as long as that loop hasn't
+    // moved on (i.e. it's still showing the default, untouched value)
+    if(state.current.phase === "k1"){
+      state.current.k1Stake = state.startAmount;
+    }
     state.pendingSuggestion = null;
     saveState();
     render();
-    showToast("Ενημερώθηκε το ποσό εκκίνησης.");
+    showToast("Ενημερώθηκε το ποσό εκκίνησης και το στοίχημα Κ1.");
   });
   el.startSuggestionDismiss.addEventListener("click", function(){
     state.pendingSuggestion = null;
