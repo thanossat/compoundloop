@@ -175,17 +175,22 @@
   }
   label.field input:focus{ border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
 
+  .readout-row{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  @media (max-width:480px){ .readout-row{ grid-template-columns:1fr; } }
   .readout{
     display:flex;
     align-items:center;
     justify-content:space-between;
+    gap:8px;
     padding:12px 14px;
     background:var(--surface-2);
     border:1px dashed var(--border);
     border-radius:10px;
   }
-  .readout .rlabel{ font-size:13px; color:var(--ink-muted); font-weight:500; }
-  .readout .rvalue{ font-size:17px; font-weight:600; }
+  .readout .rlabel{ font-size:12.5px; color:var(--ink-muted); font-weight:500; }
+  .readout .rvalue{ font-size:16px; font-weight:600; }
+  .readout .rvalue.pos{ color:var(--accent); }
+  .readout .rvalue.neg{ color:var(--danger); }
 
   .choice-row{ display:flex; gap:10px; }
   button.choice{
@@ -368,7 +373,7 @@
       <h1>Compound Loop</h1>
     </div>
     <div class="total-pill">
-      <span class="label">Σύνολο Κερδών</span>
+      <span class="label">Καθαρό Σύνολο</span>
       <span class="value num" id="totalValue">€0.00</span>
     </div>
   </header>
@@ -402,9 +407,15 @@
           <input type="text" id="k1Odds" inputmode="decimal" autocomplete="off" placeholder="π.χ. 1,85">
         </label>
       </div>
-      <div class="readout" style="margin-top:12px;">
-        <span class="rlabel">Μεικτό Κέρδος Κ1 (συνολική απόδοση)</span>
-        <span class="rvalue num" id="k1Gross">€0.00</span>
+      <div class="readout-row" style="margin-top:12px;">
+        <div class="readout">
+          <span class="rlabel">Μεικτό Κ1 (συνολική απόδοση)</span>
+          <span class="rvalue num" id="k1Gross">€0.00</span>
+        </div>
+        <div class="readout">
+          <span class="rlabel">Καθαρό Κ1 (κέρδος)</span>
+          <span class="rvalue num" id="k1Net">€0.00</span>
+        </div>
       </div>
       <div class="choice-row" style="margin-top:12px;" id="k1Choices">
         <button class="choice win" id="k1Win">Νίκη</button>
@@ -426,9 +437,15 @@
           <input type="text" id="k2Odds" inputmode="decimal" autocomplete="off" placeholder="π.χ. 1,60">
         </label>
       </div>
-      <div class="readout">
-        <span class="rlabel">Μεικτό Κέρδος Κ2 (συνολική απόδοση)</span>
-        <span class="rvalue num" id="k2Gross">€0.00</span>
+      <div class="readout-row">
+        <div class="readout">
+          <span class="rlabel">Μεικτό Κ2 (συνολική απόδοση)</span>
+          <span class="rvalue num" id="k2Gross">€0.00</span>
+        </div>
+        <div class="readout">
+          <span class="rlabel">Καθαρό Κ2 (κέρδος)</span>
+          <span class="rvalue num" id="k2Net">€0.00</span>
+        </div>
       </div>
       <div class="choice-row" id="k2Choices">
         <button class="choice win" id="k2Win">Νίκη</button>
@@ -468,17 +485,19 @@
             <th>Στοίχ. Κ1</th>
             <th>Odds Κ1</th>
             <th>Μεικτό Κ1</th>
+            <th>Καθαρό Κ1</th>
             <th>Αποτ. Κ1</th>
             <th>Στοίχ. Κ2</th>
             <th>Odds Κ2</th>
             <th>Μεικτό Κ2</th>
+            <th>Καθαρό Κ2</th>
             <th>Αποτ. Κ2</th>
-            <th>Κέρδος Loop</th>
-            <th>Σύνολο</th>
+            <th>Καθαρό Loop</th>
+            <th>Καθαρό Σύνολο</th>
           </tr>
         </thead>
         <tbody id="histBody">
-          <tr><td colspan="12" class="empty-row">Δεν έχουν καταγραφεί loops ακόμα.</td></tr>
+          <tr><td colspan="14" class="empty-row">Δεν έχουν καταγραφεί loops ακόμα.</td></tr>
         </tbody>
       </table>
     </div>
@@ -526,6 +545,19 @@
         state = Object.assign(state, parsed);
         if(!state.current) state.current = { phase:"k1", date: todayISO(), k1Stake: state.startAmount, k1Odds:"", k1Result:null, k2Stake:null, k2Odds:"", k2Result:null };
         if(!state.current.date) state.current.date = todayISO();
+        // migrate loops saved before net profit was tracked
+        if(Array.isArray(state.history)){
+          state.history.forEach(function(r){
+            if(r.k1Net === undefined || r.k1Net === null){
+              r.k1Net = r.k1Result === "win" ? (r.k1Gross - r.k1Stake) : -r.k1Stake;
+            }
+            if(r.k2Net === undefined){
+              r.k2Net = (r.k2Result && r.k2Stake !== null) ? (r.k2Result === "win" ? (r.k2Gross - r.k2Stake) : -r.k2Stake) : null;
+            }
+            // older versions stored loopProfit as a gross-based figure; recompute as net
+            r.loopProfit = r.k1Net + (r.k2Net !== null ? r.k2Net : 0);
+          });
+        }
       }
     }catch(e){ /* ignore corrupt/blocked storage */ }
   }
@@ -558,6 +590,7 @@
     k1Stake: document.getElementById("k1Stake"),
     k1Odds: document.getElementById("k1Odds"),
     k1Gross: document.getElementById("k1Gross"),
+    k1Net: document.getElementById("k1Net"),
     k1Choices: document.getElementById("k1Choices"),
     k1Win: document.getElementById("k1Win"),
     k1Lose: document.getElementById("k1Lose"),
@@ -567,6 +600,7 @@
     k2Stake: document.getElementById("k2Stake"),
     k2Odds: document.getElementById("k2Odds"),
     k2Gross: document.getElementById("k2Gross"),
+    k2Net: document.getElementById("k2Net"),
     k2Choices: document.getElementById("k2Choices"),
     k2Win: document.getElementById("k2Win"),
     k2Lose: document.getElementById("k2Lose"),
@@ -586,6 +620,11 @@
 
   function k1GrossVal(){ return num(state.current.k1Stake) * num(state.current.k1Odds); }
   function k2GrossVal(){ return num(state.current.k2Stake) * num(state.current.k2Odds); }
+  // theoretical net for the currently-typed stake/odds, before any result is decided
+  function k1NetVal(){ return k1GrossVal() - num(state.current.k1Stake); }
+  function k2NetVal(){ return k2GrossVal() - num(state.current.k2Stake); }
+  // actual net of a settled cycle: win = gross - stake, lose = -stake (whole stake gone)
+  function netOf(stake, gross, result){ return result === "win" ? (gross - stake) : -stake; }
 
   function totalProfit(){
     return state.history.reduce(function(sum, row){ return sum + row.loopProfit; }, 0);
@@ -604,18 +643,31 @@
     };
   }
 
-  function finalizeLoop(loopProfit){
+  function finalizeLoop(){
     var c = state.current;
+    var k1Stake = num(c.k1Stake);
+    var k1Gross = k1GrossVal();
+    var k1Net = netOf(k1Stake, k1Gross, c.k1Result);
+
+    var k2Played = c.k1Result === "win" && !!c.k2Result;
+    var k2Stake = k2Played ? num(c.k2Stake) : null;
+    var k2Gross = k2Played ? k2GrossVal() : null;
+    var k2Net = k2Played ? netOf(k2Stake, k2Gross, c.k2Result) : null;
+
+    var loopProfit = k1Net + (k2Net !== null ? k2Net : 0);
+
     state.history.push({
       date: c.date || todayISO(),
       loopNo: state.loopCounter,
-      k1Stake: num(c.k1Stake),
+      k1Stake: k1Stake,
       k1Odds: num(c.k1Odds),
-      k1Gross: k1GrossVal(),
+      k1Gross: k1Gross,
+      k1Net: k1Net,
       k1Result: c.k1Result,
-      k2Stake: c.k1Result === "win" ? num(c.k2Stake) : null,
-      k2Odds: c.k1Result === "win" ? num(c.k2Odds) : null,
-      k2Gross: c.k1Result === "win" ? k2GrossVal() : null,
+      k2Stake: k2Stake,
+      k2Odds: k2Played ? num(c.k2Odds) : null,
+      k2Gross: k2Gross,
+      k2Net: k2Net,
       k2Result: c.k2Result,
       loopProfit: loopProfit
     });
@@ -633,6 +685,7 @@
     el.k1Stake.value = c.k1Stake === null || c.k1Stake === undefined ? "" : c.k1Stake;
     el.k1Odds.value = c.k1Odds;
     el.k1Gross.textContent = fmt(k1GrossVal());
+    setNetReadout(el.k1Net, k1NetVal());
 
     var k1Ready = num(c.k1Stake) > 0 && num(c.k1Odds) >= 1;
     el.k1Win.disabled = !k1Ready;
@@ -661,6 +714,7 @@
       el.k2Stake.value = c.k2Stake;
       el.k2Odds.value = c.k2Odds;
       el.k2Gross.textContent = fmt(k2GrossVal());
+      setNetReadout(el.k2Net, k2NetVal());
 
       var k2Ready = num(c.k2Stake) > 0 && num(c.k2Odds) >= 1;
       el.k2Win.disabled = !k2Ready;
@@ -673,17 +727,24 @@
 
   function round2(n){ return Math.round(n * 100) / 100; }
 
+  function setNetReadout(node, value){
+    node.textContent = fmt(value);
+    node.className = "rvalue num " + (value > 0 ? "pos" : value < 0 ? "neg" : "");
+  }
+
   // updates only computed read-outs / button states while the person is
   // actively typing, so an input's value is never rewritten under their cursor
   function renderReadoutsOnly(){
     var c = state.current;
     el.k1Gross.textContent = fmt(k1GrossVal());
+    setNetReadout(el.k1Net, k1NetVal());
     var k1Ready = num(c.k1Stake) > 0 && num(c.k1Odds) >= 1;
     el.k1Win.disabled = !k1Ready;
     el.k1Lose.disabled = !k1Ready;
 
     if(c.phase !== "k1"){
       el.k2Gross.textContent = fmt(k2GrossVal());
+      setNetReadout(el.k2Net, k2NetVal());
       var k2Ready = num(c.k2Stake) > 0 && num(c.k2Odds) >= 1;
       el.k2Win.disabled = !k2Ready;
       el.k2Lose.disabled = !k2Ready;
@@ -704,7 +765,7 @@
     el.totalValue.className = "value num " + (total > 0 ? "pos" : total < 0 ? "neg" : "zero");
 
     if(state.history.length === 0){
-      el.histBody.innerHTML = '<tr><td colspan="12" class="empty-row">Δεν έχουν καταγραφεί loops ακόμα.</td></tr>';
+      el.histBody.innerHTML = '<tr><td colspan="14" class="empty-row">Δεν έχουν καταγραφεί loops ακόμα.</td></tr>';
       return;
     }
 
@@ -714,9 +775,12 @@
       var k2StakeCell = r.k2Stake !== null ? fmt(r.k2Stake) : "—";
       var k2OddsCell = r.k2Odds !== null ? r.k2Odds.toFixed(2) : "—";
       var k2GrossCell = r.k2Gross !== null ? fmt(r.k2Gross) : "—";
+      var k2NetCell = r.k2Net !== null ? fmt(r.k2Net) : "—";
+      var k2NetClass = r.k2Net !== null ? (r.k2Net >= 0 ? "loop-profit pos" : "loop-profit neg") : "";
       var k2ResultCell = r.k2Result ? (r.k2Result === "win" ? "Νίκη" : "Ήττα") : "—";
       var k2ResultClass = r.k2Result === "win" ? "result-win" : r.k2Result === "lose" ? "result-lose" : "";
       var k1ResultClass = r.k1Result === "win" ? "result-win" : "result-lose";
+      var k1NetClass = r.k1Net >= 0 ? "loop-profit pos" : "loop-profit neg";
       var profitClass = r.loopProfit >= 0 ? "pos" : "neg";
       var runningClass = running >= 0 ? "pos" : "neg";
       return "<tr>" +
@@ -725,10 +789,12 @@
         "<td>" + fmt(r.k1Stake) + "</td>" +
         "<td>" + r.k1Odds.toFixed(2) + "</td>" +
         "<td>" + fmt(r.k1Gross) + "</td>" +
+        "<td class=\"" + k1NetClass + "\">" + fmt(r.k1Net) + "</td>" +
         "<td class=\"" + k1ResultClass + "\">" + (r.k1Result === "win" ? "Νίκη" : "Ήττα") + "</td>" +
         "<td>" + k2StakeCell + "</td>" +
         "<td>" + k2OddsCell + "</td>" +
         "<td>" + k2GrossCell + "</td>" +
+        "<td class=\"" + k2NetClass + "\">" + k2NetCell + "</td>" +
         "<td class=\"" + k2ResultClass + "\">" + k2ResultCell + "</td>" +
         "<td class=\"loop-profit " + profitClass + "\">" + fmt(r.loopProfit) + "</td>" +
         "<td class=\"loop-profit " + runningClass + "\">" + fmt(running) + "</td>" +
@@ -913,8 +979,7 @@
   });
   el.k1Lose.addEventListener("click", function(){
     state.current.k1Result = "lose";
-    var loss = -num(state.current.k1Stake);
-    finalizeLoop(loss);
+    finalizeLoop();
     saveState();
     render();
     showToast("Το loop καταγράφηκε ως ήττα.");
@@ -933,16 +998,14 @@
 
   el.k2Win.addEventListener("click", function(){
     state.current.k2Result = "win";
-    var profit = k1GrossVal() + k2GrossVal();
-    finalizeLoop(profit);
+    finalizeLoop();
     saveState();
     render();
     showToast("Loop ολοκληρώθηκε με νίκη σε Κ1 και Κ2.");
   });
   el.k2Lose.addEventListener("click", function(){
     state.current.k2Result = "lose";
-    var loss = -k2GrossVal() === 0 ? -num(state.current.k2Stake) : -num(state.current.k2Stake);
-    finalizeLoop(-num(state.current.k2Stake));
+    finalizeLoop();
     saveState();
     render();
     showToast("Το loop καταγράφηκε ως ήττα στον Κύκλο 2.");
@@ -953,7 +1016,7 @@
       showToast("Δεν υπάρχει ιστορικό για αντιγραφή.");
       return;
     }
-    var header = ["Imerominia","Loop","Stoixima_K1","Odds_K1","Meikto_K1","Apotelesma_K1","Stoixima_K2","Odds_K2","Meikto_K2","Apotelesma_K2","Kerdos_Loop","Synoliko"];
+    var header = ["Imerominia","Loop","Stoixima_K1","Odds_K1","Meikto_K1","Katharo_K1","Apotelesma_K1","Stoixima_K2","Odds_K2","Meikto_K2","Katharo_K2","Apotelesma_K2","Katharo_Loop","Katharo_Synoliko"];
     var running = 0;
     var lines = [header.join(";")];
     state.history.forEach(function(r){
@@ -964,10 +1027,12 @@
         r.k1Stake.toFixed(2),
         r.k1Odds.toFixed(2),
         r.k1Gross.toFixed(2),
+        r.k1Net.toFixed(2),
         r.k1Result === "win" ? "Nikh" : "Htta",
         r.k2Stake !== null ? r.k2Stake.toFixed(2) : "",
         r.k2Odds !== null ? r.k2Odds.toFixed(2) : "",
         r.k2Gross !== null ? r.k2Gross.toFixed(2) : "",
+        r.k2Net !== null ? r.k2Net.toFixed(2) : "",
         r.k2Result ? (r.k2Result === "win" ? "Nikh" : "Htta") : "",
         r.loopProfit.toFixed(2),
         running.toFixed(2)
