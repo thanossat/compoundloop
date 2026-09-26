@@ -411,7 +411,7 @@
         </div>
       </div>
     </div>
-    <p class="subtext">Χρησιμοποιείται ως προεπιλεγμένο ποσό στοιχηματισμού στην αρχή κάθε νέου loop. Μπορείς να αλλάξεις το ποσό στοιχηματισμού του Κύκλου 1 χειροκίνητα ανά πάσα στιγμή, χωρίς να επηρεάζει τους υπολογισμούς. Μετά από κάθε πλήρως επιτυχημένο loop (νίκη σε Κ1 και Κ2), προτείνεται εδώ νέο ποσό εκκίνησης αυξημένο κατά 28,9%.</p>
+    <p class="subtext">Χρησιμοποιείται ως προεπιλεγμένο ποσό στοιχηματισμού στην αρχή κάθε νέου loop. Μπορείς να αλλάξεις το ποσό στοιχηματισμού του Κύκλου 1 χειροκίνητα ανά πάσα στιγμή, χωρίς να επηρεάζει τους υπολογισμούς. Μετά από κάθε πλήρως επιτυχημένο loop (νίκη σε Κ1 και Κ2), προτείνεται εδώ νέο ποσό εκκίνησης — το ποσοστό αύξησης υπολογίζεται δυναμικά από το πραγματικό καθαρό κέρδος εκείνου του loop σε σχέση με το στοίχημα του Κύκλου 1.</p>
   </section>
 
   <section class="card" id="activeCard">
@@ -547,8 +547,6 @@
     return local.toISOString().slice(0, 10);
   }
 
-  var SUGGEST_GROWTH_PCT = 0.289; // 28.9%
-
   var state = {
     startAmount: 100,
     loopCounter: 1,
@@ -575,6 +573,10 @@
         state = Object.assign(state, parsed);
         if(!state.current) state.current = { phase:"k1", date: todayISO(), k1Stake: state.startAmount, k1Odds:"", k1Result:null, k2Stake:null, k2Odds:"", k2Result:null };
         if(!state.current.date) state.current.date = todayISO();
+        // drop a suggestion saved before the growth % was computed dynamically
+        if(state.pendingSuggestion && typeof state.pendingSuggestion.growthPct !== "number"){
+          state.pendingSuggestion = null;
+        }
         // migrate loops saved before net profit was tracked
         if(Array.isArray(state.history)){
           state.history.forEach(function(r){
@@ -706,9 +708,13 @@
       loopProfit: loopProfit
     });
 
-    if(c.k1Result === "win" && c.k2Result === "win"){
+    if(c.k1Result === "win" && c.k2Result === "win" && k1Stake > 0){
+      // dynamic growth %: the loop's own realized return relative to what was risked (k1Stake),
+      // not a fixed number — applied to the current start amount to suggest the next one
+      var growthPct = loopProfit / k1Stake;
       state.pendingSuggestion = {
-        amount: round2(num(state.startAmount) * (1 + SUGGEST_GROWTH_PCT)),
+        amount: round2(num(state.startAmount) * (1 + growthPct)),
+        growthPct: growthPct,
         forLoopNo: state.loopCounter
       };
     }
@@ -777,7 +783,14 @@
       return;
     }
     el.startSuggestion.hidden = false;
-    el.startSuggestionText.innerHTML = "Πρόταση μετά τη νίκη: <span class=\"num\">" + fmt(s.amount) + "</span> (+28,9%)";
+    var pctLabel = fmtPct(s.growthPct);
+    el.startSuggestionText.innerHTML = "Πρόταση μετά τη νίκη: <span class=\"num\">" + fmt(s.amount) + "</span> (" + pctLabel + ")";
+  }
+
+  function fmtPct(fraction){
+    var pct = fraction * 100;
+    var sign = pct >= 0 ? "+" : "-";
+    return sign + Math.abs(pct).toLocaleString("el-GR", {minimumFractionDigits:1, maximumFractionDigits:1}) + "%";
   }
 
   function setNetReadout(node, value){
