@@ -529,7 +529,7 @@
     </div>
   </section>
 
-  <footer class="note">Εργαλείο προσωπικής καταγραφής. Τα δεδομένα αποθηκεύονται με το άνοιγμα της σελίδας (λειτουργεί και από ιδιωτική περιήγηση ή άλλη συσκευή, εφόσον είσαι συνδεδεμένος), με τοπικό αντίγραφο ασφαλείας στον browser.</footer>
+  <footer class="note">Εργαλείο προσωπικής καταγραφής. Το ιστορικό των loops συγχρονίζεται αυτόματα με το Google Sheet "Compound Loop" (λειτουργεί άρα και από ιδιωτική περιήγηση ή άλλη συσκευή), με τοπικό αντίγραφο ασφαλείας στον browser.</footer>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -539,6 +539,10 @@
   "use strict";
 
   var STORE_KEY = "compoundLoopState_v1";
+
+  // ---- Google Sheets sync (history table only — settings & in-progress loop stay local) ----
+  var SHEET_API_URL = "https://script.google.com/macros/s/AKfycbySY6Ib0T8s0fAO1Say1T4uNBZgWVauKhkdqofHtsuyhw1crC8uVASVp3OXwNAdhomejg/exec";
+  var SHEET_CSV_HEADER = ["Imerominia","Loop","Stoixima_K1","Odds_K1","Meikto_K1","Katharo_K1","Apotelesma_K1","Stoixima_K2","Odds_K2","Meikto_K2","Katharo_K2","Apotelesma_K2","Katharo_Loop","Katharo_Synoliko"];
 
   function todayISO(){
     var d = new Date();
@@ -652,6 +656,94 @@
         }, function(){ /* db became unavailable mid-session — keep working locally */ });
       }).catch(function(){ /* db not available in this view */ });
     }catch(e){ /* window.claude not present at all — local-only mode */ }
+  }
+
+  // ---- Google Sheets sync ----
+  function historyToSheetRows(){
+    var running = 0;
+    var rows = [SHEET_CSV_HEADER];
+    state.history.forEach(function(r){
+      running += r.loopProfit;
+      rows.push([
+        r.date || "",
+        r.loopNo,
+        r.k1Stake,
+        r.k1Odds,
+        r.k1Gross,
+        r.k1Net,
+        r.k1Result === "win" ? "Nikh" : "Htta",
+        r.k2Stake !== null ? r.k2Stake : "",
+        r.k2Odds !== null ? r.k2Odds : "",
+        r.k2Gross !== null ? r.k2Gross : "",
+        r.k2Net !== null ? r.k2Net : "",
+        r.k2Result ? (r.k2Result === "win" ? "Nikh" : "Htta") : "",
+        r.loopProfit,
+        running
+      ]);
+    });
+    return rows;
+  }
+
+  function sheetRowsToHistory(rows){
+    var history = [];
+    for(var i = 1; i < rows.length; i++){
+      var row = rows[i];
+      if(!row || row.length === 0 || row[0] === "" || row[0] === undefined) continue;
+      var k2ResultRaw = row[11];
+      history.push({
+        date: row[0] ? String(row[0]).slice(0, 10) : "",
+        loopNo: Number(row[1]),
+        k1Stake: Number(row[2]),
+        k1Odds: Number(row[3]),
+        k1Gross: Number(row[4]),
+        k1Net: Number(row[5]),
+        k1Result: row[6] === "Nikh" ? "win" : "lose",
+        k2Stake: (row[7] === "" || row[7] === undefined) ? null : Number(row[7]),
+        k2Odds: (row[8] === "" || row[8] === undefined) ? null : Number(row[8]),
+        k2Gross: (row[9] === "" || row[9] === undefined) ? null : Number(row[9]),
+        k2Net: (row[10] === "" || row[10] === undefined) ? null : Number(row[10]),
+        k2Result: k2ResultRaw === "Nikh" ? "win" : (k2ResultRaw === "Htta" ? "lose" : null),
+        loopProfit: Number(row[12])
+      });
+    }
+    return history;
+  }
+
+  var sheetWriteTimer = null;
+  function pushToSheet(){
+    if(!SHEET_API_URL || typeof fetch !== "function") return;
+    if(sheetWriteTimer) clearTimeout(sheetWriteTimer);
+    sheetWriteTimer = setTimeout(function(){
+      sheetWriteTimer = null;
+      fetch(SHEET_API_URL, {
+        method: "POST",
+        // text/plain avoids a CORS preflight the Apps Script endpoint can't answer;
+        // the body is still parsed as JSON on the server side
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify({ action: "replaceAll", rows: historyToSheetRows() })
+      }).catch(function(){ /* offline or blocked — localStorage already has it, next change retries */ });
+    }, 800);
+  }
+
+  function pullFromSheet(){
+    if(!SHEET_API_URL || typeof fetch !== "function") return;
+    fetch(SHEET_API_URL, { method: "GET" })
+      .then(function(res){ return res.json(); })
+      .then(function(rows){
+        if(!Array.isArray(rows)) return;
+        var remoteHistory = sheetRowsToHistory(rows);
+        if(remoteHistory.length > state.history.length){
+          // the Sheet has loops this device doesn't — adopt it as the fuller record
+          state.history = remoteHistory;
+          state.loopCounter = remoteHistory.length + 1;
+          try{ localStorage.setItem(STORE_KEY, JSON.stringify(state)); }catch(e){}
+          render();
+        } else if(remoteHistory.length < state.history.length){
+          // this device has loops the Sheet is missing — bring it up to date
+          pushToSheet();
+        }
+      })
+      .catch(function(){ /* offline or blocked — keep working from localStorage */ });
   }
 
   function fmt(n){
@@ -1124,6 +1216,7 @@
     state.current.k1Result = "lose";
     finalizeLoop();
     saveState();
+    pushToSheet();
     render();
     showToast("Το loop καταγράφηκε ως ήττα.");
   });
@@ -1143,6 +1236,7 @@
     state.current.k2Result = "win";
     finalizeLoop();
     saveState();
+    pushToSheet();
     render();
     showToast("Loop ολοκληρώθηκε με νίκη σε Κ1 και Κ2.");
   });
@@ -1150,6 +1244,7 @@
     state.current.k2Result = "lose";
     finalizeLoop();
     saveState();
+    pushToSheet();
     render();
     showToast("Το loop καταγράφηκε ως ήττα στον Κύκλο 2.");
   });
@@ -1222,6 +1317,7 @@
     state.loopCounter = 1;
     startNewLoop();
     saveState();
+    pushToSheet();
     render();
     showToast("Το ιστορικό διαγράφηκε.");
   });
@@ -1230,6 +1326,7 @@
   loadState();
   render();
   initCloudSync();
+  pullFromSheet();
 
   // hot-reload snapshot support for open viewers
   if(window.claude && window.claude.hot && typeof window.claude.hot.snapshot === "function"){
