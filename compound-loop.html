@@ -709,45 +709,39 @@
     return history;
   }
 
-  // XMLHttpRequest instead of fetch(): Firefox enforces CORS on the Apps Script
-  // redirect (script.google.com -> script.googleusercontent.com) in a way that
-  // blocks fetch(), but not XMLHttpRequest, from reading the response.
-  function sheetRequest(method, body, onSuccess, onError){
-    try{
-      var xhr = new XMLHttpRequest();
-      xhr.open(method, SHEET_API_URL, true);
-      if(body !== null && body !== undefined){
-        xhr.setRequestHeader("Content-Type", "text/plain;charset=utf-8");
-      }
-      xhr.onload = function(){
-        if(xhr.status >= 200 && xhr.status < 300){
-          onSuccess && onSuccess(xhr.responseText);
-        } else if(onError){
-          onError(new Error("HTTP " + xhr.status));
-        }
-      };
-      xhr.onerror = function(){ onError && onError(new Error("network error")); };
-      xhr.send(body || null);
-    }catch(e){ onError && onError(e); }
-  }
-
+  // The Apps Script /exec URL 302-redirects to the actual content host, and some
+  // browsers (Firefox in particular) refuse to expose a cross-origin redirect's
+  // response to fetch()/XHR unless the redirect itself carries CORS headers,
+  // which Apps Script doesn't add. So: writes go out as a no-cors fetch (we don't
+  // need to read the response), and reads use a JSONP <script> tag, which is
+  // exempt from CORS entirely — the same reason opening the URL directly works.
   var sheetWriteTimer = null;
   function pushToSheet(){
-    if(!SHEET_API_URL) return;
+    if(!SHEET_API_URL || typeof fetch !== "function") return;
     if(sheetWriteTimer) clearTimeout(sheetWriteTimer);
     sheetWriteTimer = setTimeout(function(){
       sheetWriteTimer = null;
-      sheetRequest("POST", JSON.stringify({ action: "replaceAll", rows: historyToSheetRows() }),
-        function(){ /* saved */ },
-        function(){ /* offline or blocked — localStorage already has it, next change retries */ });
+      fetch(SHEET_API_URL, {
+        method: "POST",
+        mode: "no-cors",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify({ action: "replaceAll", rows: historyToSheetRows() })
+      }).catch(function(){ /* offline or blocked — localStorage already has it, next change retries */ });
     }, 800);
   }
 
+  var sheetJsonpCounter = 0;
   function pullFromSheet(){
     if(!SHEET_API_URL) return;
-    sheetRequest("GET", null, function(responseText){
-      var rows;
-      try{ rows = JSON.parse(responseText); }catch(e){ return; }
+    sheetJsonpCounter += 1;
+    var cbName = "__compoundLoopSheetCb" + sheetJsonpCounter;
+    var script = document.createElement("script");
+    var cleanup = function(){
+      delete window[cbName];
+      if(script.parentNode) script.parentNode.removeChild(script);
+    };
+    window[cbName] = function(rows){
+      cleanup();
       if(!Array.isArray(rows)) return;
       var remoteHistory = sheetRowsToHistory(rows);
       if(remoteHistory.length > state.history.length){
@@ -760,7 +754,10 @@
         // this device has loops the Sheet is missing — bring it up to date
         pushToSheet();
       }
-    }, function(){ /* offline or blocked — keep working from localStorage */ });
+    };
+    script.onerror = cleanup;
+    script.src = SHEET_API_URL + (SHEET_API_URL.indexOf("?") === -1 ? "?" : "&") + "callback=" + cbName + "&_=" + Date.now();
+    document.body.appendChild(script);
   }
 
   function fmt(n){
