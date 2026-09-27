@@ -709,41 +709,58 @@
     return history;
   }
 
+  // XMLHttpRequest instead of fetch(): Firefox enforces CORS on the Apps Script
+  // redirect (script.google.com -> script.googleusercontent.com) in a way that
+  // blocks fetch(), but not XMLHttpRequest, from reading the response.
+  function sheetRequest(method, body, onSuccess, onError){
+    try{
+      var xhr = new XMLHttpRequest();
+      xhr.open(method, SHEET_API_URL, true);
+      if(body !== null && body !== undefined){
+        xhr.setRequestHeader("Content-Type", "text/plain;charset=utf-8");
+      }
+      xhr.onload = function(){
+        if(xhr.status >= 200 && xhr.status < 300){
+          onSuccess && onSuccess(xhr.responseText);
+        } else if(onError){
+          onError(new Error("HTTP " + xhr.status));
+        }
+      };
+      xhr.onerror = function(){ onError && onError(new Error("network error")); };
+      xhr.send(body || null);
+    }catch(e){ onError && onError(e); }
+  }
+
   var sheetWriteTimer = null;
   function pushToSheet(){
-    if(!SHEET_API_URL || typeof fetch !== "function") return;
+    if(!SHEET_API_URL) return;
     if(sheetWriteTimer) clearTimeout(sheetWriteTimer);
     sheetWriteTimer = setTimeout(function(){
       sheetWriteTimer = null;
-      fetch(SHEET_API_URL, {
-        method: "POST",
-        // text/plain avoids a CORS preflight the Apps Script endpoint can't answer;
-        // the body is still parsed as JSON on the server side
-        headers: { "Content-Type": "text/plain;charset=utf-8" },
-        body: JSON.stringify({ action: "replaceAll", rows: historyToSheetRows() })
-      }).catch(function(){ /* offline or blocked — localStorage already has it, next change retries */ });
+      sheetRequest("POST", JSON.stringify({ action: "replaceAll", rows: historyToSheetRows() }),
+        function(){ /* saved */ },
+        function(){ /* offline or blocked — localStorage already has it, next change retries */ });
     }, 800);
   }
 
   function pullFromSheet(){
-    if(!SHEET_API_URL || typeof fetch !== "function") return;
-    fetch(SHEET_API_URL, { method: "GET" })
-      .then(function(res){ return res.json(); })
-      .then(function(rows){
-        if(!Array.isArray(rows)) return;
-        var remoteHistory = sheetRowsToHistory(rows);
-        if(remoteHistory.length > state.history.length){
-          // the Sheet has loops this device doesn't — adopt it as the fuller record
-          state.history = remoteHistory;
-          state.loopCounter = remoteHistory.length + 1;
-          try{ localStorage.setItem(STORE_KEY, JSON.stringify(state)); }catch(e){}
-          render();
-        } else if(remoteHistory.length < state.history.length){
-          // this device has loops the Sheet is missing — bring it up to date
-          pushToSheet();
-        }
-      })
-      .catch(function(){ /* offline or blocked — keep working from localStorage */ });
+    if(!SHEET_API_URL) return;
+    sheetRequest("GET", null, function(responseText){
+      var rows;
+      try{ rows = JSON.parse(responseText); }catch(e){ return; }
+      if(!Array.isArray(rows)) return;
+      var remoteHistory = sheetRowsToHistory(rows);
+      if(remoteHistory.length > state.history.length){
+        // the Sheet has loops this device doesn't — adopt it as the fuller record
+        state.history = remoteHistory;
+        state.loopCounter = remoteHistory.length + 1;
+        try{ localStorage.setItem(STORE_KEY, JSON.stringify(state)); }catch(e){}
+        render();
+      } else if(remoteHistory.length < state.history.length){
+        // this device has loops the Sheet is missing — bring it up to date
+        pushToSheet();
+      }
+    }, function(){ /* offline or blocked — keep working from localStorage */ });
   }
 
   function fmt(n){
